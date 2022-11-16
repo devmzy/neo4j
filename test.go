@@ -2,11 +2,18 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"log"
 	"net/http"
 )
+
+type QueryReq struct {
+	Label string `json:"label" form:"label"`
+	Key   string `json:"key" form:"key"`
+	Limit string `json:"limit" form:"limit"`
+}
 
 func Cors() gin.HandlerFunc {
 	return func(context *gin.Context) {
@@ -24,213 +31,90 @@ func Cors() gin.HandlerFunc {
 	}
 }
 
-// func EdgeQuery(ctx context.Context, driver neo4j.DriverWithContext, Cypher string) ([]any, error) {
-//
-// 	// var list []neo4j.Relationship
-// 	session := driver.NewSession(ctx, neo4j.SessionConfig{})
-// 	defer session.Close(ctx)
-// 	result, err := session.Run(ctx, Cypher, nil)
-// 	if err != nil {
-// 		log.Println("Query Run failed: ", err)
-// 		return nil, err
-// 	}
-// 	var list []any
-//
-// 	for result.Next(ctx) {
-// 		record := result.Record()
-// 		list = append(list, record.Values)
-// 		// if value, ok := record.Get("r"); ok {
-//
-// 		// relationship := value.(neo4j.Relationship)
-// 		// list = append(list, relationship)
-// 		//				log.Println("Edgeid:", relationship.Id, ">>>Node:", relationship.StartId, "---", relationship.Type, "--->","Node:",relationship.EndId)
-// 		// }
-// 	}
-// 	if err = result.Err(); err != nil {
-// 		return nil, err
-// 	}
-// 	return list, result.Err()
-//
-// }
+func accuracyQuery(c *gin.Context) {
+
+}
 
 func main() {
 	r := gin.Default()
 	r.Use(Cors())
-	r.GET("/ping", func(c *gin.Context) {
-		// nodeData := getNodeData()
-		// edgeData := getEdgeData()
+	r.POST("/query", func(c *gin.Context) {
+		var req QueryReq
+		c.Bind(&req)
+		fmt.Println(req.Label, req.Key, req.Limit)
 		dbUri := "neo4j://localhost:7687"
 		driver, err := neo4j.NewDriverWithContext(dbUri, neo4j.BasicAuth("neo4j", "123456", ""))
 		if err != nil {
 			panic(err)
 		}
+		c.ContentType()
 		ctx := context.Background()
 		defer driver.Close(ctx)
-		// cql := "MATCH (m)-[r*3..]->(n) return m,n,r limit 100"
-		cql := "match p=({name:'大渡河'})-[*]->(t) return p limit 60"
 
-		// cql := "MATCH (n:`河流`) RETURN n LIMIT 25"
+		cql := "match p=({name:'" + req.Key + "'})-[r*0..4]-() return p limit " + req.Limit
+
+		if req.Label != "" {
+			cql = "match p=(n:" + req.Label + "{name:'" + req.Key + "'})-[r*0..4]-() return p limit " + req.Limit
+		}
+		if req.Key == "" {
+			cql = "match p=(n:" + req.Label + ")-[r*0..4]-() return p limit " + req.Limit
+		}
+		fmt.Println(cql)
 		session := driver.NewSession(ctx, neo4j.SessionConfig{})
 		defer session.Close(ctx)
-		// getNodeData()
-		nodeList, relationList, err := Query(ctx, driver, cql)
+		result, err := session.Run(ctx, cql, nil)
 		if err != nil {
-			return
+			log.Println("Query Run failed: ", err)
 		}
-		c.JSON(200, gin.H{
-			"nodeList": nodeList,
-			"edgeList": relationList,
-			"data":     relationList,
-		})
-	})
-	r.GET("/query/:key", func(c *gin.Context) {
-		key := c.Param("key")
-		// nodeData := getNodeData()
-		// edgeData := getEdgeData()
-		dbUri := "neo4j://localhost:7687"
-		driver, err := neo4j.NewDriverWithContext(dbUri, neo4j.BasicAuth("neo4j", "123456", ""))
+		var nodeList []neo4j.Node
+		var edgeList []neo4j.Relationship
+		recordList, err := result.Collect(ctx)
 		if err != nil {
-			panic(err)
+			fmt.Println("record failed", err)
 		}
-		ctx := context.Background()
-		defer driver.Close(ctx)
-		// cql := "MATCH (m)-[r*3..]->(n) return m,n,r limit 100"
-		// cql := "match p=(n:`" + key + "`)-[*2..3]->(t) return p limit 25"
-		cql := "match p=(  {name:'" + key + "'})-[*]->() return p limit 600"
+		// fmt.Println(recordList)
+		for _, record := range recordList {
+			for _, value := range record.Values {
+				path := value.(neo4j.Path)
+				node := path.Nodes
+				edge := path.Relationships
+				nodeList = append(nodeList, node...)
+				edgeList = append(edgeList, edge...)
+			}
+		}
 
-		// cql := "MATCH (n:`河流`) RETURN n LIMIT 25"
-		session := driver.NewSession(ctx, neo4j.SessionConfig{})
-		defer session.Close(ctx)
-		// getNodeData()
-		nodeList, relationList, err := Query(ctx, driver, cql)
-		if err != nil {
-			return
-		}
-		print(nodeList)
 		c.JSON(200, gin.H{
-			// "nodeList": nodeList,
-			// "edgeList": relationList,
-			"data": relationList,
+			"nodeList": RemoveNode(nodeList),
+			"edgeList": RemoveEdge(edgeList),
 		})
 	})
+
 	r.Run(":89") // listen and serve on 0.0.0.0:8080
 
 }
 
-// func getNodeData() []neo4j.Node {
-// 	dbUri := "neo4j://localhost:7687"
-// 	driver, err := neo4j.NewDriverWithContext(dbUri, neo4j.BasicAuth("neo4j", "123456", ""))
-// 	if err != nil {
-// 		panic(err)
-// 	}
-// 	ctx := context.Background()
-// 	defer driver.Close(ctx)
-// 	cql := "match p=(s)-[*2..3]->(t) return p limit 25"
-// 	// cql := "MATCH (n:`河流`) RETURN n LIMIT 25"
-// 	session := driver.NewSession(ctx, neo4j.SessionConfig{})
-// 	defer session.Close(ctx)
-// 	data, err := NodeQuery(ctx, driver, cql)
-// 	for i := 0; i < len(data); i++ {
-//
-// 		fmt.Println(data[i].Props["name"].(string)) // / OID 是我自己创建 neo4j db entry 的时候，添加的私有属性
-// 		fmt.Println(data[i].ElementId)
-//
-// 	}
-// 	return data
-// }
-//
-// func getEdgeData() []any {
-// 	dbUri := "neo4j://localhost:7687"
-// 	driver, err := neo4j.NewDriverWithContext(dbUri, neo4j.BasicAuth("neo4j", "123456", ""))
-// 	if err != nil {
-// 		panic(err)
-// 	}
-// 	ctx := context.Background()
-// 	defer driver.Close(ctx)
-// 	// cql := "MATCH ()-[r]->() RETURN r"
-//
-// 	// cql := "MATCH ()-[r*3..]->(result) return result limit 100"
-// 	cql := "MATCH (n:`河流`) RETURN n LIMIT 25"
-//
-// 	session := driver.NewSession(ctx, neo4j.SessionConfig{})
-// 	defer session.Close(ctx)
-// 	data, err := EdgeQuery(ctx, driver, cql)
-// 	// for i := 0; i < len(data); i++ {
-// 	//
-// 	// 	fmt.Println(data[i].Props["name"].(string)) // / OID 是我自己创建 neo4j db entry 的时候，添加的私有属性
-// 	// 	fmt.Println(data[i].ElementId)
-// 	//
-// 	// }
-// 	return data
-// }
-
-// func NodeQuery(ctx context.Context, driver neo4j.DriverWithContext, Cypher string) ([]neo4j.Node, error) {
-//
-// 	var list []neo4j.Node
-// 	session := driver.NewSession(ctx, neo4j.SessionConfig{})
-// 	defer session.Close(ctx)
-//
-// 	result, err := session.Run(ctx, Cypher, nil)
-//
-// 	if err != nil {
-// 		return nil, err
-// 	}
-//
-// 	for result.Next(ctx) {
-// 		record := result.Record()
-// 		if value, ok := record.Get("n"); ok {
-// 			node := value.(neo4j.Node)
-// 			list = append(list, node)
-// 		}
-// 	}
-// 	if err = result.Err(); err != nil {
-// 		return nil, err
-// 	}
-//
-// 	return list, result.Err()
-//
-// }
-
-func Query(ctx context.Context, driver neo4j.DriverWithContext, Cypher string) ([]neo4j.Node, []any, error) {
-	session := driver.NewSession(ctx, neo4j.SessionConfig{})
-	defer session.Close(ctx)
-	result, err := session.Run(ctx, Cypher, nil)
-	if err != nil {
-		log.Println("Query Run failed: ", err)
-		return nil, nil, err
-	}
-	var list []any
-	// var nodeList []neo4j.Node
-	// var relationList []neo4j.Relationship
-
-	for result.Next(ctx) {
-		record := result.Record()
-		// valueList := record.Values.([]interface{})
-		// values := record.Values
-		if value, ok := record.Get("p"); ok {
-			// node := value.(neo4j.Node)
-			// nodeList = append(nodeList, node)
-			list = append(list, value)
-
+func RemoveNode(nodeList []neo4j.Node) []neo4j.Node {
+	var result []neo4j.Node
+	tempMap := make(map[string]int)
+	for _, element := range nodeList {
+		l := len(tempMap)
+		tempMap[element.ElementId] = 0
+		if len(tempMap) != l {
+			result = append(result, element)
 		}
 	}
-	return nil, list, nil
-	// if value, ok := record.Get("m"); ok {
-	// 	node := value.(neo4j.Node)
-	// 	nodeList = append(nodeList, node)
-	// }
-	// if value, ok := record.Get("n"); ok {
-	// 	node := value.(neo4j.Node)
-	// 	nodeList = append(nodeList, node)
-	// }
-	// if value, ok := record.Get("r"); ok {
-	// 	valueList := value.([]interface{})
-	// 	relationList = append(relationList, valueList...)
-	// }
-	// }
-	// if err = result.Err(); err != nil {
-	// 	return nil, nil, err
-	// }
-	// return nodeList, relationList, result.Err()
+	return result
+}
 
+func RemoveEdge(edgeList []neo4j.Relationship) []neo4j.Relationship {
+	var result []neo4j.Relationship
+	tempMap := make(map[string]int)
+	for _, element := range edgeList {
+		l := len(tempMap)
+		tempMap[element.ElementId] = 0
+		if len(tempMap) != l {
+			result = append(result, element)
+		}
+	}
+	return result
 }
