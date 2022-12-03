@@ -27,6 +27,8 @@ func main() {
 	r := gin.Default()
 	r.Use(Cors())
 	r.POST("/query", controller.QueryHandler)
-	r.Run(":89") // listen and serve on 0.0.0.0:8080
+	r.POST("/visit", controller.AddVisit)
+	r.GET("/visit", controller.QueryVisit)
+	r.Run(":8001") // listen and serve on 0.0.0.0:8080
 
 }
